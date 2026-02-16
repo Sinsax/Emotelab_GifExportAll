@@ -73,20 +73,25 @@ public class ExportBatchTools : BaseUnityPlugin
         // 检查骨骼是否处于播放状态（双重判定模式切换）
         bool active = IsSpineActive();
 
-        if (currentKey != "-" && !string.IsNullOrEmpty(currentKey) || active)
+        // 判定逻辑：只要选中的是空位 "-" 且没有动画在播放，就强制进入批量激活状态
+        if (currentKey == "-" || string.IsNullOrEmpty(currentKey))
         {
-            // 单次导出模式
-            _exportBtn.text = BtnSingle;
-            _exportBtn.style.color = Color.white;
-            _exportBtn.style.backgroundColor = new StyleColor(StyleKeyword.Null); 
+            if (!active)
+            {
+                // --- 批量导出模式 ---
+                _exportBtn.SetEnabled(true); // 强制激活按钮，防止因空位被禁用
+                _exportBtn.text = BtnBatch;
+                _exportBtn.style.color = Color.cyan;
+                _exportBtn.style.backgroundColor = new StyleColor(new Color(0.1f, 0.25f, 0.25f, 1f));
+                return; // 提前返回，避免被下面的逻辑覆盖
+            }
         }
-        else
-        {
-            // 批量导出模式
-            _exportBtn.text = BtnBatch;
-            _exportBtn.style.color = Color.cyan;
-            _exportBtn.style.backgroundColor = new StyleColor(new Color(0.1f, 0.25f, 0.25f, 1f));
-        }
+
+        // --- 单次导出模式 ---
+        // 注意：此处不强行 SetEnabled(true)，保留原生的单项导出判断逻辑
+        _exportBtn.text = BtnSingle;
+        _exportBtn.style.color = Color.white;
+        _exportBtn.style.backgroundColor = new StyleColor(StyleKeyword.Null); 
     }
 
     // 检测 Spine 骨骼当前的播放状态
