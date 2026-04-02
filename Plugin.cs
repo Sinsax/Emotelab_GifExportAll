@@ -162,11 +162,8 @@ public class ExportBatchTools : BaseUnityPlugin
     IEnumerator BatchProcess()
     {
         _isBatching = true;
-        SetListLock(true); // 锁定列表
+        SetListLock(true); // 锁定左侧列表，防止用户切换动画导致数据错乱
         
-        _exportBtn.text = "中止录制";
-        _exportBtn.style.color = Color.red;
-
         var exporter = UnityEngine.Object.FindFirstObjectByType<AnimationExporter>();
         var handler = _handlerInfo?.GetValue(_listInstance);
         var items = _itemsInfo?.GetValue(_listInstance) as Dictionary<string, string>;
@@ -174,8 +171,7 @@ public class ExportBatchTools : BaseUnityPlugin
         if (exporter == null || handler == null || items == null) 
         { 
             Logger.LogError("找不到组件，任务取消。");
-            SetListLock(false);
-            _isBatching = false; 
+            CleanupBatch();
             yield break; 
         }
         
@@ -189,35 +185,59 @@ public class ExportBatchTools : BaseUnityPlugin
 
         for (int i = 0; i < tasks.Length; i++)
         {
-            Logger.LogInfo($"[进度 {i + 1}/{tasks.Length}] 正在导出动画: {tasks[i].Key}");
-            
-            // 触发播放
+            // --- 1. 准备阶段 ---
             play?.Invoke(controller, new object[] { tasks[i].Value, true, 0 });
-            // 等待模型加载及录制准备 (1.5s 为经验安全值)
-            yield return new WaitForSeconds(1.5f);
-            yield return new WaitForEndOfFrame();
-            
-            // 跳过第一项逻辑
-            if(i == 0) continue;
+            // yield return new WaitForSeconds(1.0f); // 给 Spine 骨骼一点加载时间
 
-            bool done = false;
-            Action callback = () => done = true;
-            exporter.OnExportComplete += callback;
+            // --- 2. 注册状态判定 ---
+            bool isStepDone = false;
+            Action successAction = () => { isStepDone = true; };
+            Action<string> errorAction = (err) => { 
+                Logger.LogError($"动画 {tasks[i].Key} 导出失败: {err}");
+                isStepDone = true; 
+            };
 
-            // 执行单次导出动作
+            exporter.OnExportComplete += successAction;
+            exporter.OnExportError += errorAction;
+
+            // --- 3. 触发导出并夺回按钮控制权 ---
             exporter.ExportAnimation();
             
-            // 阻塞直至单次导出回调完成
-            while (!done) yield return null;
+            // 关键点：某些逻辑会在此时把按钮 disable 掉，我们要强行改回来
+            yield return null; // 等待一帧，确保原逻辑执行完毕
+            if (_exportBtn != null)
+            {
+                _exportBtn.SetEnabled(true); // 强行激活按钮以便点击“中止”
+                _exportBtn.text = $"中止 ({i + 1}/{tasks.Length})";
+                _exportBtn.style.color = Color.red;
+                _exportBtn.style.backgroundColor = new StyleColor(new Color(0.3f, 0, 0, 1f));
+            }
 
-            exporter.OnExportComplete -= callback;
-            yield return new WaitForSeconds(0.3f); 
+            // --- 4. 阻塞等待 ---
+            float timer = 0f;
+            while (!isStepDone && timer < 60f) // 设置 60 秒硬超时防止卡死
+            {
+                timer += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            // --- 5. 清理当前步监听 ---
+            exporter.OnExportComplete -= successAction;
+            exporter.OnExportError -= errorAction;
+
+            yield return new WaitForSeconds(2.0f); // 缓冲，避免 IO 过于频繁
         }
 
-        SetListLock(false); // 解锁列表
+        CleanupBatch();
+        Logger.LogInfo("批量任务全部完成。");
+    }
+
+    private void CleanupBatch()
+    {
         _isBatching = false;
         _worker = null;
-        Logger.LogInfo("批量导出完成。");
+        SetListLock(false);
+        UpdateInterface(); // 恢复为“批量导出全部”或“导出当前动画”
     }
 }
 
